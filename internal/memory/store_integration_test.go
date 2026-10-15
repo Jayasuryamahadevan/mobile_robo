@@ -36,8 +36,11 @@ func TestIntegrationTemporalCorrectionAndDeletion(t *testing.T){
  earlier,err:=store.Context(ctx,p,"favorite_drink","",knownBefore,knownBefore)
  if err!=nil{t.Fatal(err)}
  if len(earlier.Items)==0||earlier.Items[0].Type!="semantic"{t.Fatalf("missing recorded-time fact %+v",earlier.Items)}
- history,err:=store.History(ctx,p,"self","favorite_drink")
- if err!=nil||len(history)!=2{t.Fatalf("history %v %#v",err,history)}
+ pastToday,err:=store.Context(ctx,p,"favorite_drink","",knownBefore,now)
+ if err!=nil{t.Fatal(err)}
+ if len(pastToday.Items)==0||pastToday.Items[0].Type!="semantic" {t.Fatalf("current knowledge lost past validity %+v",pastToday.Items)}
+  history,err:=store.History(ctx,p,"self","favorite_drink")
+ if err!=nil||len(history)<3{t.Fatalf("history %v %#v",err,history)}
  if _,err:=store.DeleteAll(ctx,p);err!=nil{t.Fatal(err)}
  after,err:=store.Context(ctx,p,"favorite_drink","",now,now)
  if err!=nil{t.Fatal(err)}

@@ -106,15 +106,51 @@ func (s *Store) PutFact(ctx context.Context,p auth.Claims,f FactInput)(string,er
  _,err=tx.Exec(ctx,`SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))`,p.Tenant+":"+p.User+":"+f.Subject,f.Predicate)
  if err!=nil{return "",err}
  var version int
- err=tx.QueryRow(ctx,`SELECT version FROM memory_facts WHERE tenant_id=$1 AND user_id=$2 AND subject=$3 AND predicate=$4 AND recorded_until IS NULL FOR UPDATE`,p.Tenant,p.User,f.Subject,f.Predicate).Scan(&version)
- if err!=nil && !errors.Is(err,pgx.ErrNoRows){return "",err}
- if errors.Is(err,pgx.ErrNoRows){version=0}
+ err=tx.QueryRow(ctx,`SELECT COALESCE(MAX(version),0) FROM memory_facts
+  WHERE tenant_id=$1 AND user_id=$2 AND subject=$3 AND predicate=$4`,
+  p.Tenant,p.User,f.Subject,f.Predicate).Scan(&version)
+ if err!=nil{return "",err}
+ type prior struct{
+  value string
+  source string
+  asserted string
+  confidence float64
+  version int
+  from time.Time
+  until *time.Time
+ }
+ retained:=[]prior{}
+ rows,err:=tx.Query(ctx,`SELECT value::text,source_event_id::text,asserted_by,confidence,version,valid_from,valid_until
+  FROM memory_facts WHERE tenant_id=$1 AND user_id=$2 AND subject=$3 AND predicate=$4
+  AND recorded_until IS NULL ORDER BY valid_from FOR UPDATE`,
+  p.Tenant,p.User,f.Subject,f.Predicate)
+ if err!=nil{return "",err}
+ for rows.Next(){
+  var old prior
+  if err=rows.Scan(&old.value,&old.source,&old.asserted,&old.confidence,&old.version,&old.from,&old.until);err!=nil{rows.Close();return "",err}
+  if old.from.Before(when){retained=append(retained,old)}
+ }
+ err=rows.Err();rows.Close();if err!=nil{return "",err}
  evidence:=fmt.Sprintf("%s.%s = %s",f.Subject,f.Predicate,string(f.Value))
  event:=EventInput{SessionID:f.SessionID,AgentID:p.Agent,Source:"user",Content:evidence}
  eventID,_,err:=s.addEventTx(ctx,tx,p,event,"")
  if err!=nil{return "",err}
- _,err=tx.Exec(ctx,`UPDATE memory_facts SET recorded_until=$5 WHERE tenant_id=$1 AND user_id=$2 AND subject=$3 AND predicate=$4 AND recorded_until IS NULL`,p.Tenant,p.User,f.Subject,f.Predicate,now)
+ _,err=tx.Exec(ctx,`UPDATE memory_facts SET recorded_until=$5 WHERE tenant_id=$1 AND user_id=$2
+  AND subject=$3 AND predicate=$4 AND recorded_until IS NULL`,
+  p.Tenant,p.User,f.Subject,f.Predicate,now)
  if err!=nil{return "",err}
+ // Re-materialize older valid-time segments under current knowledge.
+ // Without this, historical questions asked today would lose prior facts.
+ for _,old:=range retained {
+  until:=old.until
+  if until==nil||until.After(when){t:=when;until=&t}
+  if !until.After(old.from){continue}
+  _,err=tx.Exec(ctx,`INSERT INTO memory_facts
+   (tenant_id,user_id,subject,predicate,value,confidence,source_event_id,version,valid_from,valid_until,recorded_from,asserted_by)
+   VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12)`,
+   p.Tenant,p.User,f.Subject,f.Predicate,old.value,old.confidence,old.source,old.version,old.from,until,now,old.asserted)
+  if err!=nil{return "",err}
+ }
  var factID string
  err=tx.QueryRow(ctx,`INSERT INTO memory_facts(tenant_id,user_id,subject,predicate,value,confidence,source_event_id,version,valid_from,recorded_from,asserted_by)
  VALUES ($1,$2,$3,$4,$5::jsonb,1.0,$6,$7,$8,$9,'user_explicit') RETURNING id::text`,

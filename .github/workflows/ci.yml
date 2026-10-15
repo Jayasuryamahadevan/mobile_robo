@@ -11,8 +11,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Start PostgreSQL with pgvector
+        run: |
+          docker run -d --name testpg -e POSTGRES_DB=memory -e POSTGRES_USER=memory -e POSTGRES_PASSWORD=test_memory -p 5432:5432 pgvector/pgvector:pg16
+          for i in $(seq 1 30); do
+            if docker exec testpg pg_isready -U memory -d memory; then break; fi
+            sleep 2
+          done
+          docker exec -i testpg psql -v ON_ERROR_STOP=1 -U memory -d memory < db/migrations/001_init.sql
       - run: go mod tidy
       - run: gofmt -w cmd internal
       - run: go vet ./...
       - run: go test -race ./...
+        env:
+          MEMORY_TEST_DATABASE_URL: postgres://memory:test_memory@localhost:5432/memory?sslmode=disable
       - run: go build ./cmd/memoryd ./cmd/memoryworker ./cmd/devtoken

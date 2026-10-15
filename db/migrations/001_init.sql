@@ -1,4 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS memory_events (
@@ -51,7 +52,12 @@ CREATE TABLE IF NOT EXISTS memory_facts (
  CHECK (valid_until IS NULL OR valid_until >= valid_from),
  CHECK (recorded_until IS NULL OR recorded_until >= recorded_from)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS one_current_fact ON memory_facts(tenant_id,user_id,subject,predicate) WHERE recorded_until IS NULL;
+-- Current knowledge may have multiple non-overlapping valid-time segments.
+ALTER TABLE memory_facts ADD CONSTRAINT no_overlapping_current_validity
+ EXCLUDE USING gist (
+  tenant_id WITH =, user_id WITH =, subject WITH =, predicate WITH =,
+  tstzrange(valid_from,COALESCE(valid_until,'infinity'::timestamptz),'[)') WITH &&
+ ) WHERE (recorded_until IS NULL);
 CREATE INDEX IF NOT EXISTS facts_temporal_idx ON memory_facts(tenant_id,user_id,valid_from,valid_until,recorded_from,recorded_until);
 CREATE INDEX IF NOT EXISTS facts_subject_idx ON memory_facts(tenant_id,user_id,subject,predicate,recorded_from DESC);
 
