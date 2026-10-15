@@ -171,7 +171,8 @@ func (s *Store) ReplayUser(ctx context.Context,tenant,user string)(int64,error){
   `INSERT INTO memory_outbox(event_type,tenant_id,user_id,aggregate_id)
      SELECT 'fact.project',f.tenant_id,f.user_id,f.id
      FROM memory_facts f WHERE f.tenant_id=$1 AND f.user_id=$2
-     AND f.recorded_until IS NULL`,
+     AND f.recorded_until IS NULL
+     AND f.valid_from <= now() AND (f.valid_until IS NULL OR f.valid_until > now())`,
  }{
   tag,e:=tx.Exec(ctx,statement,tenant,user);if e!=nil{return 0,e}
   count+=tag.RowsAffected()

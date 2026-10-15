@@ -76,7 +76,8 @@ func (s *Store) handleJob(ctx context.Context,j Job)error{
   if !s.Config.GraphEnabled{return nil}
   var subject,predicate,value string;var valid time.Time
   err:=s.DB.QueryRow(ctx,`SELECT subject,predicate,value::text,valid_from FROM memory_facts
-  WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND recorded_until IS NULL`,j.Aggregate,j.Tenant,j.User).Scan(&subject,&predicate,&value,&valid)
+  WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND recorded_until IS NULL
+    AND valid_from <= now() AND (valid_until IS NULL OR valid_until > now())`,j.Aggregate,j.Tenant,j.User).Scan(&subject,&predicate,&value,&valid)
   if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
   if !strings.HasPrefix(predicate,"relationship."){return nil}
   var target string
