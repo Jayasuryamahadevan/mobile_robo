@@ -1,13 +1,16 @@
 # Phone Robot — Temporal Cognitive Memory Fabric
 
-A Go-based, provenance-first memory service for long-running personal and robotic agents. The authoritative store is PostgreSQL; Redis accelerates working memory; Qdrant and Neo4j are optional, reconstructible search projections. Writes use a transactional outbox. No LLM is required on the critical memory read path.
+A CQRS-oriented, Go-based, provenance-first memory service for long-running personal and robotic agents. The authoritative store is PostgreSQL; Redis accelerates working memory; Qdrant and Neo4j are optional, reconstructible search projections. Writes use a transactional outbox. No LLM is required on the critical memory read path.
 
 ## Features
 
 - User- and tenant-scoped authenticated memory API (HS256 JWT)
 - Bitemporal semantic facts with a full revision history and source event references
 - Episodic and lexical retrieval with optional vector enrichment
-- Idempotent event ingestion and outbox-backed asynchronous indexing
+- Durable transactional outbox → NATS JetStream relay → idempotent projector with manual ACKs
+- Separate command/query HTTP modes (`API_MODE=command` or `API_MODE=query`)
+- Scoped projection health and explicit replay endpoints
+- Idempotent event ingestion and asynchronous indexing
 - Optional Qdrant vectors and Neo4j graph projections
 - Explicit forgetting and deletion tombstones
 - Simple reviewed procedural memory registry
@@ -21,7 +24,9 @@ A Go-based, provenance-first memory service for long-running personal and roboti
 3. Create an access token: `go run ./cmd/devtoken -tenant demo -user alice -scopes memory:read,memory:write,memory:delete,procedure:approve` (requires the same `JWT_SECRET`).
 4. Use the bearer token with `POST /v1/events`, `PUT /v1/facts`, and `GET /v1/context?query=...`.
 
-The Compose stack is for development. Production requires TLS, dedicated database roles, secret management, backups, and deployment-specific latency benchmarking. See [Architecture](docs/ARCHITECTURE.md).
+The Compose stack starts PostgreSQL, Redis, NATS JetStream, an API, a relay, and a projector. The legacy polling worker is opt-in only. **Existing PostgreSQL volumes require applying migration 002 manually**; init scripts run only on first database initialization.
+
+The Compose stack is for development. Production requires TLS, dedicated database roles, secret management, backups, and deployment-specific latency benchmarking. See [Architecture](docs/ARCHITECTURE.md) and [CQRS + JetStream ADR](docs/CQRS_NATS.md).
 
 ## API overview
 
@@ -31,6 +36,8 @@ The Compose stack is for development. Production requires TLS, dedicated databas
 - `PUT /v1/facts` — explicitly assert or correct a fact
 - `GET /v1/context?query=...&session_id=...` — retrieve a bounded, evidence-linked context
 - `GET /v1/facts/history?subject=...&predicate=...` — recorded-time fact history
+- `GET /v1/projections/status` — scoped projection backlog
+- `POST /v1/projections/replay` — re-enqueue still-valid memories for indexing
 - `POST /v1/procedures` and `POST /v1/procedures/{id}/approve`
 - `DELETE /v1/memories` — initiate a scoped memory purge; the authoritative store is updated synchronously, projections asynchronously
 
