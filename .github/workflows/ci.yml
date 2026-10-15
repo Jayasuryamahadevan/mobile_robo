@@ -5,24 +5,44 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: Start PostgreSQL with pgvector
+      - name: Start PostgreSQL and apply versioned migrations
         run: |
           docker run -d --name testpg -e POSTGRES_DB=memory -e POSTGRES_USER=memory -e POSTGRES_PASSWORD=test_memory -p 5432:5432 pgvector/pgvector:pg16
           for i in $(seq 1 30); do
             if docker exec testpg pg_isready -U memory -d memory; then break; fi
             sleep 2
           done
-          docker exec -i testpg psql -v ON_ERROR_STOP=1 -U memory -d memory < db/migrations/001_init.sql
+          for migration in db/migrations/001_init.sql db/migrations/002_cqrs_jetstream.sql db/migrations/003_security_roles.sql; do
+            docker exec -i testpg psql -v ON_ERROR_STOP=1 -U memory -d memory < "$migration"
+          done
+          docker exec testpg psql -v ON_ERROR_STOP=1 -U memory -d memory -c "ALTER ROLE memory_api LOGIN PASSWORD 'test_api_password'"
+      - name: Start NATS JetStream
+        run: |
+          docker run -d --name testnats -p 4222:4222 nats:2.11-alpine --jetstream
+          for i in $(seq 1 30); do
+            if bash -c 'echo > /dev/tcp/127.0.0.1/4222' 2>/dev/null; then break; fi
+            sleep 1
+          done
       - run: go mod tidy
       - run: gofmt -w cmd internal
       - run: go vet ./...
-      - run: go test -race ./...
+      - name: Database + NATS + RLS integration tests (race)
+        run: go test -count=1 -race ./...
         env:
           MEMORY_TEST_DATABASE_URL: postgres://memory:test_memory@localhost:5432/memory?sslmode=disable
-      - run: go build ./cmd/memoryd ./cmd/memoryworker ./cmd/devtoken
+          MEMORY_RLS_TEST_DATABASE_URL: postgres://memory_api:test_api_password@localhost:5432/memory?sslmode=disable
+          NATS_TEST_URL: nats://localhost:4222
+      - run: go build ./cmd/memoryd ./cmd/memoryworker ./cmd/memoryrelay ./cmd/memoryprojector ./cmd/devtoken
+      - name: Validate Compose configuration
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+      - name: Build minimal production image
+        run: docker build -t phone-robot-memory:ci .
