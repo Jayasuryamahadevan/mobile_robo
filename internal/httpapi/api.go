@@ -53,15 +53,24 @@ func parseTime(input string,def time.Time)(time.Time,error){
  if e!=nil{return t,errors.New("invalid timestamp (expected RFC3339)")}
  return t.UTC(),nil
 }
-func (a *API) Handler()http.Handler{
+func (a *API) Handler()http.Handler{return a.HandlerMode("all")}
+// HandlerMode exposes command-only and query-only HTTP surfaces for separate
+// deployments. The default combined mode preserves local development usage.
+func (a *API) HandlerMode(mode string)http.Handler{
  priv:=http.NewServeMux()
- priv.HandleFunc("POST /v1/events",a.events)
- priv.HandleFunc("PUT /v1/facts",a.facts)
- priv.HandleFunc("GET /v1/context",a.context)
- priv.HandleFunc("GET /v1/facts/history",a.history)
- priv.HandleFunc("POST /v1/procedures",a.procedures)
- priv.HandleFunc("POST /v1/procedures/{id}/approve",a.approve)
- priv.HandleFunc("DELETE /v1/memories",a.delete)
+ if mode!="query"{
+  priv.HandleFunc("POST /v1/events",a.events)
+  priv.HandleFunc("PUT /v1/facts",a.facts)
+  priv.HandleFunc("POST /v1/procedures",a.procedures)
+  priv.HandleFunc("POST /v1/procedures/{id}/approve",a.approve)
+  priv.HandleFunc("DELETE /v1/memories",a.delete)
+  priv.HandleFunc("POST /v1/projections/replay",a.replay)
+ }
+ if mode!="command"{
+  priv.HandleFunc("GET /v1/context",a.context)
+  priv.HandleFunc("GET /v1/facts/history",a.history)
+  priv.HandleFunc("GET /v1/projections/status",a.projections)
+ }
  mux:=http.NewServeMux()
  mux.HandleFunc("GET /healthz",func(w http.ResponseWriter,r *http.Request){jsonResponse(w,200,map[string]string{"status":"alive"})})
  mux.HandleFunc("GET /readyz",func(w http.ResponseWriter,r *http.Request){
@@ -140,4 +149,19 @@ func (a *API) delete(w http.ResponseWriter,r *http.Request){
  id,err:=a.Store.DeleteAll(c,p)
  if err!=nil{fail(w,err);return}
  jsonResponse(w,202,map[string]any{"deletion_id":id,"authoritative_deleted":true,"projections":"pending"})
+}
+
+func (a *API) projections(w http.ResponseWriter,r *http.Request){
+ p:=auth.Principal(r.Context());if !require(w,p,"memory:read"){return}
+ c,cancel:=context.WithTimeout(r.Context(),2*time.Second);defer cancel()
+ result,err:=a.Store.ProjectionStatus(c,p.Tenant,p.User)
+ if err!=nil{fail(w,err);return}
+ jsonResponse(w,200,result)
+}
+func (a *API) replay(w http.ResponseWriter,r *http.Request){
+ p:=auth.Principal(r.Context());if !require(w,p,"memory:write"){return}
+ c,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
+ count,err:=a.Store.ReplayUser(c,p.Tenant,p.User)
+ if err!=nil{fail(w,err);return}
+ jsonResponse(w,202,map[string]any{"jobs_enqueued":count,"projection_state":"pending"})
 }

@@ -77,6 +77,10 @@ func (s *Store) addEventTx(ctx context.Context,tx pgx.Tx,p auth.Claims,e EventIn
  return id,true,err
 }
 func (s *Store) AddEvent(ctx context.Context,p auth.Claims,e EventInput,key string)(string,error){
+ // Timestamp before the transaction, not in an async cache goroutine:
+ // a cache insert racing a subsequent deletion must remain older than
+ // the persistent deletion barrier.
+ acceptedAt:=time.Now().UTC()
  if err:=ValidateEvent(&e);err!=nil{return "",err}
  tx,err:=s.scoped(ctx,p);if err!=nil{return "",err};defer tx.Rollback(ctx)
  if _,err=tx.Exec(ctx,`SELECT pg_advisory_xact_lock(hashtext($1),0)`,p.Tenant+":"+p.User);err!=nil{return "",err}
@@ -85,7 +89,7 @@ func (s *Store) AddEvent(ctx context.Context,p auth.Claims,e EventInput,key stri
  if isNew && s.Cache!=nil {
   go func(){
    c,cancel:=context.WithTimeout(context.Background(),60*time.Millisecond);defer cancel()
-   item,_:=json.Marshal(struct{ID,Content string; At time.Time}{id,e.Content,time.Now().UTC()})
+   item,_:=json.Marshal(struct{ID,Content string; At time.Time}{id,e.Content,acceptedAt})
    k:=fmt.Sprintf("wm:%s:%s:%s",p.Tenant,p.User,e.SessionID)
    pipe:=s.Cache.Pipeline()
    pipe.LPush(c,k,item);pipe.LTrim(c,k,0,9);pipe.Expire(c,k,15*time.Minute)

@@ -48,7 +48,7 @@ func (s *Store) RunWorker(ctx context.Context)error{
   }
   if err!=nil{slog.Error("outbox claim", "error",err);select{case <-ctx.Done():return nil;case <-ticker.C:continue}}
   processCtx,cancel:=context.WithTimeout(ctx,40*time.Second)
-  workErr:=s.handleJob(processCtx,job)
+  workErr:=s.withProjectionLock(processCtx,job,func()error{return s.handleJob(processCtx,job)})
   cancel()
   doneCtx,doneCancel:=context.WithTimeout(context.Background(),3*time.Second)
   if e:=s.finish(doneCtx,job,workErr);e!=nil{slog.Error("outbox ack","error",e,"job",job.ID)}
@@ -101,6 +101,19 @@ func (s *Store) handleJob(ctx context.Context,j Job)error{
    if err:=s.Vector.PurgeNeo4j(ctx,j.Tenant,j.User);err!=nil{return err}
   }
   _,err:=s.DB.Exec(ctx,`UPDATE memory_deletions SET projections_complete_at=now() WHERE id=$1 AND tenant_id=$2 AND user_id=$3`,j.Aggregate,j.Tenant,j.User)
+  if err!=nil{return err}
+  // A user may have written new memories between the authoritative delete
+  // and eventual projection purge. Re-enqueue their still-live projections
+  // while the shared user advisory lock is held by the projector.
+  _,err=s.DB.Exec(ctx,`INSERT INTO memory_outbox(event_type,tenant_id,user_id,aggregate_id)
+    SELECT 'episode.index',e.tenant_id,e.user_id,e.id
+    FROM memory_events e JOIN memory_episodes ep ON ep.event_id=e.id
+    WHERE e.tenant_id=$1 AND e.user_id=$2
+      AND e.deleted_at IS NULL AND ep.deleted_at IS NULL`,j.Tenant,j.User)
+  if err!=nil{return err}
+  _,err=s.DB.Exec(ctx,`INSERT INTO memory_outbox(event_type,tenant_id,user_id,aggregate_id)
+    SELECT 'fact.project',f.tenant_id,f.user_id,f.id
+    FROM memory_facts f WHERE f.tenant_id=$1 AND f.user_id=$2 AND f.recorded_until IS NULL`,j.Tenant,j.User)
   return err
  default:return fmt.Errorf("unknown outbox type %q",j.Kind)
  }

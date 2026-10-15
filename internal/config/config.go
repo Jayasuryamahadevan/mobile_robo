@@ -8,7 +8,7 @@ import (
  "time"
 )
 type Config struct {
- DBURL,RedisAddr,Port,JWTSecret,Issuer,Audience string
+ DBURL,RedisAddr,NATSURL,Port,JWTSecret,Issuer,Audience string
  OllamaURL,EmbeddingModel,QdrantURL,Neo4jURL,Neo4jUser,Neo4jPassword string
  VectorEnabled,GraphEnabled bool
  WorkerPoll time.Duration
@@ -18,6 +18,7 @@ func Load() (Config,error) {
  c:=Config{
   DBURL:get("DATABASE_URL",""),
   RedisAddr:get("REDIS_ADDR","localhost:6379"),
+  NATSURL:get("NATS_URL","nats://localhost:4222"),
   Port:get("PORT","8080"),
   JWTSecret:get("JWT_SECRET",""),
   Issuer:get("JWT_ISSUER","phone-robot"),

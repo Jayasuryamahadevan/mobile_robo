@@ -19,7 +19,7 @@ func main(){
  c,err:=config.Load();if err!=nil{slog.Error("config","error",err);os.Exit(1)}
  ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM);defer stop()
  s,err:=memory.NewStore(ctx,c);if err!=nil{slog.Error("database","error",err);os.Exit(1)};defer s.Close()
- server:=&http.Server{Addr:":"+c.Port,Handler:(&httpapi.API{Store:s}).Handler(),ReadHeaderTimeout:3*time.Second,ReadTimeout:7*time.Second,WriteTimeout:8*time.Second,IdleTimeout:30*time.Second}
+ server:=&http.Server{Addr:":"+c.Port,Handler:(&httpapi.API{Store:s}).HandlerMode(os.Getenv("API_MODE")),ReadHeaderTimeout:3*time.Second,ReadTimeout:7*time.Second,WriteTimeout:8*time.Second,IdleTimeout:30*time.Second}
  go func(){
   <-ctx.Done()
   shutdown,done:=context.WithTimeout(context.Background(),5*time.Second);defer done()
