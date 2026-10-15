@@ -117,8 +117,8 @@ func (s *Store) PutFact(ctx context.Context,p auth.Claims,f FactInput)(string,er
  if err!=nil{return "",err}
  var factID string
  err=tx.QueryRow(ctx,`INSERT INTO memory_facts(tenant_id,user_id,subject,predicate,value,confidence,source_event_id,version,valid_from,recorded_from,asserted_by)
- VALUES ($1,$2,$3,$4,$5,1.0,$6,$7,$8,$9,'user_explicit') RETURNING id::text`,
- p.Tenant,p.User,f.Subject,f.Predicate,[]byte(f.Value),eventID,version+1,when,now).Scan(&factID)
+ VALUES ($1,$2,$3,$4,$5::jsonb,1.0,$6,$7,$8,$9,'user_explicit') RETURNING id::text`,
+ p.Tenant,p.User,f.Subject,f.Predicate,string(f.Value),eventID,version+1,when,now).Scan(&factID)
  if err!=nil{return "",err}
  _,err=tx.Exec(ctx,`INSERT INTO memory_outbox(event_type,tenant_id,user_id,aggregate_id) VALUES ('fact.project',$1,$2,$3)`,p.Tenant,p.User,factID)
  if err!=nil{return "",err}
@@ -183,6 +183,22 @@ func (s *Store) Context(ctx context.Context,p auth.Claims,query,session string,a
    result.Items=append(result.Items,MemoryItem{ID:id,Type:"episodic",Content:content,SourceEventID:id,Confidence:1,Score:score,ValidFrom:&occurred})
   }
   err=rows.Err();rows.Close();if err!=nil{return result,err}
+ }
+ if term!="" {
+  procedures,procErr:=tx.Query(ctx,`SELECT id::text,name,steps::text,required_permissions
+   FROM memory_procedures WHERE tenant_id=$1 AND user_id=$2 AND state='approved'
+   AND name ILIKE '%' || $3 || '%' ORDER BY approved_at DESC LIMIT 3`,p.Tenant,p.User,term)
+  if procErr!=nil{return result,procErr}
+  for procedures.Next(){
+   var id,name,steps string;var required []string
+   if err=procedures.Scan(&id,&name,&steps,&required);err!=nil{procedures.Close();return result,err}
+   allowed:=true
+   for _,scope:=range required{if !p.Has(scope){allowed=false;break}}
+   if allowed {
+    result.Items=append(result.Items,MemoryItem{ID:id,Type:"procedural",Content:name+" steps="+steps,SourceEventID:id,Confidence:1,Score:0.78})
+   }
+  }
+  err=procedures.Err();procedures.Close();if err!=nil{return result,err}
  }
  // A deletion barrier also protects against stale Redis entries and late index writes.
  var deletion *time.Time

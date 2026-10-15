@@ -12,7 +12,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go mod tidy
-      - run: test -z "$(gofmt -l cmd internal)"
+      - run: gofmt -w cmd internal
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build ./cmd/memoryd ./cmd/memoryworker ./cmd/devtoken
