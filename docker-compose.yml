@@ -12,6 +12,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
       - ./db/migrations/002_cqrs_jetstream.sql:/docker-entrypoint-initdb.d/002_cqrs_jetstream.sql:ro
+      - ./db/migrations/003_security_roles.sql:/docker-entrypoint-initdb.d/003_security_roles.sql:ro
     healthcheck:
       test: ["CMD-SHELL","pg_isready -U memory -d memory"]
       interval: 3s

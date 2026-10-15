@@ -31,11 +31,22 @@ Write transaction:
 For a fresh developer instance:
 - Set `JWT_SECRET`, `POSTGRES_PASSWORD` and optional `NATS_URL` in `.env`.
 - Start `docker compose up --build -d`.
-- New databases run 001 + 002 automatically. Existing volumes must run 002 once via a migration runner before starting relay/projector.
+- New databases run 001, 002 and 003 automatically. Existing volumes must run 002 and 003 in order through a versioned migration runner before starting relay/projector.
 - The relay and projector are separate long-running processes (`cmd/memoryrelay` and `cmd/memoryprojector`).
 - `memoryworker` is a legacy, PostgreSQL-polling fallback. Never run it concurrently with the JetStream projector except during a controlled migration.
 
 For a private NATS cluster, configure NATS account permissions restricting the relay to publish only `memory.projections.v1` and the projector to consume the durable `MEMORY_PROJECTIONS` stream. Use TLS and NATS credentials outside development.
+
+
+## Database identity and row-level security
+
+Migration 003 creates non-login roles `memory_api` and `memory_projector`, grants their minimum table access, and enables row-level policies for the outbox and deletion ledger. It does **not** ship embedded passwords.
+
+Before deployment, a DBA must grant LOGIN using securely provisioned, rotated credentials. Run the command/query API with `memory_api`; run the relay and projector with `memory_projector`. The trusted projector role has `BYPASSRLS` because it processes jobs for all tenants, so it must never be exposed to untrusted clients.
+
+The API role is not the table owner. Every query of user-owned rows must run in a PostgreSQL transaction that sets `app.tenant_id` and `app.user_id` from the verified JWT. Integration tests exercise this with a true non-owner API role. The developer Compose setup continues to use the owner role for convenience and is **not** a production credential arrangement.
+
+Never connect production API processes with the database owner, postgres superuser, or projector role.
 
 ## Failure matrix
 
