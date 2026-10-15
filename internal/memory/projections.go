@@ -55,7 +55,14 @@ func (v *Vectors) SearchEpisodes(ctx context.Context,tenant,user string,vec []fl
  b,e:=v.request(ctx,"POST",strings.TrimRight(v.Config.QdrantURL,"/")+"/collections/episodes/points/query",
   map[string]any{"query":vec,"filter":map[string]any{"must":filters},"limit":10,"with_payload":false},false)
  if e!=nil{return nil,e}
- var out struct{Result struct{Points []struct{ID any `json:"id"`;Score float64 `json:"score"`} `json:"points"`}}`json:"result"`}
+ var out struct {
+  Result struct {
+   Points []struct {
+    ID any `json:"id"`
+    Score float64 `json:"score"`
+   } `json:"points"`
+  } `json:"result"`
+ }
  if e=json.Unmarshal(b,&out);e!=nil{return nil,e}
  hits:=make([]VectorHit,0,len(out.Result.Points))
  for _,h:=range out.Result.Points{if id,ok:=h.ID.(string);ok{hits=append(hits,VectorHit{ID:id,Score:h.Score})}}
