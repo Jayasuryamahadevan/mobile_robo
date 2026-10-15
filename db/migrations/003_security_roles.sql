@@ -12,11 +12,11 @@ BEGIN
  END IF;
 END
 $$;
-DO $
+DO $$
 BEGIN
  EXECUTE format('GRANT CONNECT ON DATABASE %I TO memory_api,memory_projector',current_database());
 END
-$;
+$$;
 GRANT USAGE ON SCHEMA public TO memory_api,memory_projector;
 GRANT SELECT,INSERT,UPDATE,DELETE ON
  memory_events,memory_episodes,memory_facts,memory_procedures
