@@ -31,6 +31,11 @@ jobs:
             sleep 1
           done
       - run: go mod tidy
+      - name: Export Go module checksums (temporary)
+        run: |
+          echo '__GO_SUM_BEGIN__'
+          cat go.sum
+          echo '__GO_SUM_END__'
       - run: gofmt -w cmd internal
       - run: go vet ./...
       - name: Database + NATS + RLS integration tests (race)
