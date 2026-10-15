@@ -15,10 +15,10 @@ Status: implemented on feature branch; **requires CI and operational validation 
 Write transaction:
 1. Commit source event/fact AND `memory_outbox` row in the same transaction.
 2. Return success from the API only after the authoritative transaction succeeds.
-3. Relay claims publication with a lease and publishes `{"schema_version":1,"outbox_id":123}` on `memory.projections.v1`.
+3. Relay claims publication with a lease (or reclaims a still-unprocessed notice after 10 minutes) and publishes `{"schema_version":1,"outbox_id":123}` on `memory.projections.v1`.
 4. Relay waits for JetStream PubAck then sets `published_at`. A crash after PubAck and before this UPDATE can produce duplicates by design.
 5. Projector claims the outbox row atomically using status + lease. Repeated delivery of completed/deleted work is acknowledged without duplicate application.
-6. Projector performs bounded indexing, transitions row to `done` or retry state, then ACKs the broker. After 12 processing attempts, `dead` is persisted and the broker message terminated. Inspect alerting before manual replay.
+6. Projector performs bounded indexing, transitions row to `done` or retry state, then ACKs the broker. The relay can republish a notice with the same outbox ID after 10 minutes if processing has not completed, recovering from broker retention or consumer loss. After 12 processing attempts, `dead` is persisted and the broker message terminated. Inspect alerting before manual replay.
 
 **Guarantees:** at-least-once messaging; effect-level idempotency for projections identified by immutable event/fact IDs. This is not end-to-end exactly-once transport. JetStream message IDs dedupe within a bounded window, but PostgreSQL state handles duplicates beyond that window.
 

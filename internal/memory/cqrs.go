@@ -29,7 +29,8 @@ func (s *Store) claimPublish(ctx context.Context) (Job, error) {
  err := s.DB.QueryRow(ctx, `
  WITH chosen AS (
    SELECT id FROM memory_outbox
-   WHERE published_at IS NULL AND status IN ('pending','running')
+   WHERE status IN ('pending','running')
+     AND (published_at IS NULL OR published_at < now()-interval '10 minutes')
      AND publish_retry_at <= now()
      AND (publish_lease_until IS NULL OR publish_lease_until < now())
    ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -46,14 +47,14 @@ func (s *Store) claimPublish(ctx context.Context) (Job, error) {
 func (s *Store) finishPublish(ctx context.Context,j Job,err error) error {
  if err == nil {
   _, e := s.DB.Exec(ctx,`UPDATE memory_outbox SET published_at=now(), publish_lease_until=NULL
-    WHERE id=$1 AND published_at IS NULL`,j.ID)
+    WHERE id=$1`,j.ID)
   return e
  }
  wait := 1 << min(j.Attempt,8)
  note := err.Error(); if len(note)>512 {note=note[:512]}
  _,e:=s.DB.Exec(ctx,`UPDATE memory_outbox
  SET publish_lease_until=NULL,publish_retry_at=now()+($2::integer * interval '1 second'),
- last_error=$3 WHERE id=$1 AND published_at IS NULL`,j.ID,wait,note)
+ last_error=$3 WHERE id=$1 AND status IN ('pending','running')`,j.ID,wait,note)
  return e
 }
 
@@ -127,6 +128,8 @@ func (s *Store) withProjectionLock(ctx context.Context,j Job,fn func()error)erro
   c,cancel:=context.WithTimeout(context.Background(),4*time.Second)
   if _,e:=conn.Exec(c,`SELECT pg_advisory_unlock(hashtext($1),0)`,lockKey);e!=nil{
    slog.Error("projection advisory unlock failure","error",e,"outbox_id",j.ID)
+   // Never return a session holding a PostgreSQL advisory lock to the pool.
+   _ = conn.Conn().Close(context.Background())
   }
   cancel()
  }()

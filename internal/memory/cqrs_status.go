@@ -13,6 +13,7 @@ type ProjectionHealth struct{
  Done int64 `json:"done"`
  Dead int64 `json:"dead"`
  Unpublished int64 `json:"unpublished"`
+ StalePublished int64 `json:"stale_published"`
  OldestPendingAt *time.Time `json:"oldest_pending_at,omitempty"`
 }
 
@@ -27,9 +28,10 @@ func (s *Store) ProjectionStatus(ctx context.Context,tenant,user string)(Project
         COUNT(*) FILTER(WHERE status='done'),
         COUNT(*) FILTER(WHERE status='dead'),
         COUNT(*) FILTER(WHERE published_at IS NULL AND status IN ('pending','running')),
+        COUNT(*) FILTER(WHERE published_at < now()-interval '10 minutes' AND status IN ('pending','running')),
         MIN(created_at) FILTER(WHERE status IN ('pending','running'))
  FROM memory_outbox WHERE tenant_id=$1 AND user_id=$2`,tenant,user).
- Scan(&h.Pending,&h.Running,&h.Done,&h.Dead,&h.Unpublished,&h.OldestPendingAt)
+ Scan(&h.Pending,&h.Running,&h.Done,&h.Dead,&h.Unpublished,&h.StalePublished,&h.OldestPendingAt)
  if err!=nil{return h,err}
  return h,tx.Commit(ctx)
 }
