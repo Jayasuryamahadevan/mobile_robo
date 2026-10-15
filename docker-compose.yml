@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: memory
+      POSTGRES_USER: memory
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memory_dev_only}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory -d memory"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server","--save","","--appendonly","no","--maxmemory","256mb","--maxmemory-policy","volatile-lru"]
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD","redis-cli","ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports: ["127.0.0.1:6333:6333"]
+    volumes: [qdrantdata:/qdrant/storage]
+    profiles: ["advanced"]
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-me}
+    ports: ["127.0.0.1:7474:7474","127.0.0.1:7687:7687"]
+    volumes: [neo4jdata:/data]
+    profiles: ["advanced"]
+  memoryd:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://memory:${POSTGRES_PASSWORD:-memory_dev_only}@postgres:5432/memory?sslmode=disable
+      REDIS_ADDR: redis:6379
+      PORT: 8080
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+  memoryworker:
+    build: .
+    entrypoint: ["/memoryworker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://memory:${POSTGRES_PASSWORD:-memory_dev_only}@postgres:5432/memory?sslmode=disable
+      REDIS_ADDR: redis:6379
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+volumes:
+  pgdata:
+  qdrantdata:
+  neo4jdata:
